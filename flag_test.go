@@ -1085,32 +1085,103 @@ func TestVisitFlagOrder(t *testing.T) {
 }
 
 func TestIgnoreOnError(t *testing.T) {
-	f := NewFlagSet("ignorer", IgnoreOnError)
-	f.Bool("first", true, "first")
-	f.String("second", "2", "second")
-	f.String("third", "3", "third")
-
-	err := f.Parse([]string{"--first=false", "--second=222", "--fourth=isarg", "ARG", "--fifth=isarg"})
-	if err != nil {
-		t.Errorf("Unexpected error, IgnoreOnError should not error out on parsing")
+	tests := []struct {
+		name         string
+		interspersed bool
+		in           []string
+		expected     []string
+		first        string
+		second       string
+		third        string
+	}{
+		{
+			name:     "normal test",
+			in:       []string{"--first=false", "--second=222", "--fourth=isarg", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth=isarg", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+		},
+		{
+			name:     "fourth doesn't use =",
+			in:       []string{"--first=false", "--second=222", "--fourth", "isarg", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth", "isarg", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+		},
+		{
+			name:     "third comes after 'invalid' arg",
+			in:       []string{"--first=false", "--second=222", "--fourth=isarg", "--third", "333", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth=isarg", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+			third:    "333",
+		},
+		{
+			// FIXME inconsistent with previous case, here, third is not parsed because of !interspersed.
+			name:     "third comes after invalid arg, but used '--fourth isarg' instead of '--fourt=isarg'",
+			in:       []string{"--first=false", "--second=222", "--fourth", "isarg", "--third", "333", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth", "isarg", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+			third:    "333",
+		},
+		{
+			name:     "fourth doesn't use =, but arg looks valid, but we use --",
+			in:       []string{"--first=false", "--second=222", "--", "--fourth", "--third=333", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth", "--third=333", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+		},
+		{
+			// if --fourth should be able to take "--third=333" as an argument we wouldn't want "--third=333" to get parsed.
+			name:     "fourth doesn't use =, but arg looks valid",
+			in:       []string{"--first=false", "--second=222", "--fourth", "--third=333", "ARG", "--fifth=isarg"},
+			expected: []string{"--fourth", "--third=333", "ARG", "--fifth=isarg"},
+			first:    "false",
+			second:   "222",
+			third:    "3", // if previous convention holds "--third=333" is an argument to "--fourth" not something to parse on its own
+		},
+		// I want to see a bunch more cases with shorthands...
 	}
 
-	if wanted := []string{"--fourth=isarg", "ARG", "--fifth=isarg"}; !reflect.DeepEqual(f.Args(), wanted) {
-		t.Errorf("Unexpected args, wanted %v got %v", wanted, f.Args())
-	}
+	for i, test := range tests {
+		f := NewFlagSet("ignorer", IgnoreOnError)
+		f.SetInterspersed(test.interspersed)
+		f.Bool("first", true, "first")
+		f.String("second", "2", "second")
+		f.String("third", "3", "third")
 
-	flag := f.Lookup("first")
-	if wanted := "false"; flag.Value.String() != wanted {
-		t.Errorf("Unexpected flag value for %q, wanted %v got %v", flag.Name, wanted, flag.Value.String())
-	}
+		if test.first == "" {
+			test.first = "true"
+		}
+		if test.second == "" {
+			test.second = "2"
+		}
+		if test.third == "" {
+			test.third = "3"
+		}
 
-	flag = f.Lookup("second")
-	if wanted := "222"; flag.Value.String() != wanted {
-		t.Errorf("Unexpected flag value for %q, wanted %v got %v", flag.Name, wanted, flag.Value.String())
-	}
+		err := f.Parse(test.in)
+		if err != nil {
+			t.Errorf("%d:%q: Unexpected error, IgnoreOnError should not error out on parsing", i, test.name)
+		}
 
-	flag = f.Lookup("third")
-	if wanted := "3"; flag.Value.String() != wanted {
-		t.Errorf("Unexpected flag value for %q, wanted %v got %v", flag.Name, wanted, flag.Value.String())
+		if !reflect.DeepEqual(f.Args(), test.expected) {
+			t.Errorf("%d:%q: Unexpected args, wanted %v got %v", i, test.name, test.expected, f.Args())
+		}
+
+		flag := f.Lookup("first")
+		if flag.Value.String() != test.first {
+			t.Errorf("%d:%q: Unexpected flag value for %q, wanted %v got %v", i, test.name, flag.Name, test.first, flag.Value.String())
+		}
+		flag = f.Lookup("second")
+		if flag.Value.String() != test.second {
+			t.Errorf("%d:%q: Unexpected flag value for %q, wanted %v got %v", i, test.name, flag.Name, test.second, flag.Value.String())
+		}
+		flag = f.Lookup("third")
+		if flag.Value.String() != test.third {
+			t.Errorf("%d:%q: Unexpected flag value for %q, wanted %v got %v", i, test.name, flag.Name, test.third, flag.Value.String())
+		}
+
 	}
 }
